@@ -1,0 +1,604 @@
+---
+title: "Dataton BC-2018"
+author: "ADA Analytics"
+date: "20 de octubre de 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+```
+
+## Lectura de datos
+
+### Data 1: dt_trxpse_personas_2016_2018_muestra_adjt.csv
+
+```{r, warning=FALSE}
+## Lectura del archivo dt_trxpse_personas_2016_2018_muestra_adjt.csv
+#df.trs.personas <- read.csv("~/Dataton 2018 ADA Analytics/dt_trxpse_personas_2016_2018_muestra_adjt.csv", header=FALSE)
+
+df.trs.personas <- read_csv("~/Dataton 2018 ADA Analytics/dt_trxpse_personas_2016_2018_muestra_adjt.csv",   col_names = FALSE, col_types = cols(X1 = col_character(), X2 = col_integer(), X3 = col_date(format = "%Y%m%d"), X4 = col_integer()))
+#View(df.trs.personas)
+str(df.trs.personas)
+```
+
+
+### Renombrando las variables en base a metadatos de Bancolombia
+
+
+```{r}
+colnames(df.trs.personas) <- c("id_trn_ach",
+                                "id_cliente",
+                                "fecha",
+                                "hora",
+                                "valor_trx",
+                                "ref1",
+                                "ref2",
+                                "ref3",
+                                "sector",
+                                "subsector",
+                                "descripcion")
+
+```
+
+
+### Data 2: dt_info_pagadores_muestra
+
+
+```{r, warning=FALSE,message=FALSE}
+df.pagadores <- read_csv("~/Dataton 2018 ADA Analytics/dt_info_pagadores_muestra.csv", col_names = FALSE, col_types = cols(X1 = col_integer(), X2 = col_character(), X3 = col_character(), X4 = col_character(), X5 = col_character(),  X6 = col_character(), X7 = col_character(), X8 = col_integer(), X9 = col_character()))
+#View(df.pagadores)
+```
+
+
+```{r}
+str(df.pagadores)
+```
+
+
+### Renombrando las variables en base a metadatos de Bancolombia
+
+```{r}
+colnames(df.pagadores) <- c("id_cliente",
+                            "seg_str",
+                            "ocupacion",
+                            "tipo_vivienda",
+                            "nivel_academico",
+                            "estado_civil",
+                            "genero",
+                            "edad",
+                            "ingreso_rango")
+```
+
+
+## Combinando las datas
+
+```{r}
+## Realizando un Left join con dplyr
+df.comp <- left_join(df.trs.personas,df.pagadores, by =c("id_cliente"))
+#View(df.comp)
+```
+
+```{r}
+format(object.size(df.comp),units = "auto",standard = "SI")
+```
+
+
+```{r}
+str(df.comp)
+```
+
+
+## Seleccionando una muestra de clientes más pequeña
+
+```{r}
+id <-df.comp %>% select(id_cliente) %>% distinct()
+dim(id)
+```
+
+
+```{r, message=FALSE,warning=FALSE}
+#Selección de la muestra
+
+# Número aproximado de clientes
+
+Np <- 338345*5 #Valor estimado de clientes BC
+#Error relativo
+r<-0.005
+#Nivel de confianza
+l<-0.95
+
+#Tamaño de la muestra
+require(samplingbook)
+n<- sample.size.prop(e=r,N=Np,level = l)
+n
+```
+
+```{r}
+## Seleccionando los id_clientes en la muestra
+set.seed(721) ## Fijando una semilla aleatoria
+id.muestra<- sample_n(id,size=n$n,replace=FALSE)
+head(id.muestra)
+```
+
+
+### Nueva data con los clientes muestreados
+
+
+```{r}
+df.comp.m<- inner_join(df.comp,id.muestra,by="id_cliente")
+```
+
+```{r}
+format(object.size(df.comp.m),units = "auto",standard = "SI")
+```
+
+## Guardando la data muestreada
+
+```{r}
+# Guardando el DataFrame como  RData format
+save(df.comp.m, file = "df.comp.m.23102018.RData")
+```
+
+## Carga de datos de muestra de clientes
+
+```{r}
+load("df.comp.m.23102018.RData")
+```
+
+
+```{r}
+rm(df.comp) ## Removiendo la data completa de 2.5 Gb
+```
+
+```{r}
+df.comp <- df.comp.m
+```
+
+
+
+## Análisis descriptivo de variables
+
+
+### Valores perdidos
+
+
+```{r}
+prop.na <- function(dataframe) {
+	m <- sapply(dataframe, function(x) {
+		data.frame(
+			nmiss=sum(is.na(x)), 
+			n=length(x), 
+			propnas=sum(is.na(x))/length(x)
+		)
+	})
+	d <- data.frame(t(m))
+	d <- sapply(d, unlist)
+	d <- as.data.frame(d)
+	d$variable <- row.names(d)
+	row.names(d) <- NULL
+	d <- cbind(d[ncol(d)],d[-ncol(d)])
+	return(d[order(d$propnas,decreasing = TRUE), ])
+}
+
+```
+
+
+```{r}
+df.na <- prop.na(df.comp)
+head(df.na)
+```
+
+
+```{r}
+df.na.1 <- df.na[order(df.na$nmiss,decreasing = T),]
+require(pander)
+pander(df.na.1)
+```
+
+
+```{r}
+## Gráfico de resumen de valores perdidos
+gra.2<-ggplot(data = df.na.1, aes(x=variable, y=nmiss)) + geom_col(colour= "black", size = 0.2 ) +coord_flip()
+gra.2
+```
+
+```{r}
+require(VIM)
+require(FactoMineR)
+require(magrittr)
+```
+
+```{r}
+aggr(df.comp, prop=TRUE, 
+     numbers=TRUE, border=NA,
+     combine=TRUE)
+```
+
+
+
+### Estadísticas descriptivas de las variables
+
+#### Variable valor_trx
+
+```{r}
+## Estadísticos de resumen en R
+summary(df.comp$valor_trx)
+```
+
+```{r}
+## Número de valores perdidos
+sum(is.na(df.comp$valor_trx))
+```
+
+#### Valores atipicos
+
+
+```{r}
+ggplot(data =df.comp, aes(x = "", y = valor_trx)) + 
+  geom_boxplot() +
+  coord_cartesian(ylim = c(0, 150000000)) 
+```
+
+
+
+```{r}
+# Boxplot agrupado por genero
+library(Rmisc)
+
+p1 <- ggplot(data = df.comp, aes(x=genero, y=valor_trx)) + 
+            scale_y_continuous() +
+            geom_point(aes(color=genero), alpha=0.2) +
+            geom_boxplot(outlier.size=4, outlier.colour='blue', alpha=0.1)
+
+plot(p1)
+```
+
+
+```{r}
+outlier_values <- boxplot.stats(df.comp$valor_trx)$out  # outlier values
+head(outlier_values)
+```
+
+
+### Otras variables
+
+
+```{r}
+## Grafico de barras con ggplot2
+ggplot(df.comp, aes(x =sector,y=(..count.. *100)/sum(..count..),fill=sector)) + geom_bar()+ylab("Porcentaje")+xlab("Sector")+theme(text = element_text(size=9.5))
+```
+
+
+```{r}
+## Grafico de barras con ggplot2
+#ggplot(df.comp, aes(x =subsector,y=(..count.. *100)/sum(..count..),fill=subsector)) + geom_bar()+ylab("Porcentaje")+xlab("Subsector")+theme(text = element_text(size=9.5))
+```
+
+
+```{r}
+## Grafico de barras con ggplot2
+ggplot(df.comp, aes(x =seg_str,y=(..count.. *100)/sum(..count..),fill=seg_str)) + geom_bar()+ylab("Porcentaje")+xlab("Segmento")+theme(text = element_text(size=9.5))
+```
+
+
+```{r}
+## Grafico de barras con ggplot2
+ggplot(df.comp, aes(x =ocupacion,y=(..count.. *100)/sum(..count..),fill=ocupacion)) + geom_bar()+ylab("Porcentaje")+xlab("Ocupación")+theme(text = element_text(size=9.5))
+```
+
+
+```{r}
+## Grafico de barras con ggplot2
+ggplot(df.comp, aes(x =tipo_vivienda,y=(..count.. *100)/sum(..count..),fill=tipo_vivienda)) + geom_bar()+ylab("Porcentaje")+xlab("Tipo de vivienda")+theme(text = element_text(size=9.5))
+```
+
+```{r}
+## Grafico de barras con ggplot2
+ggplot(df.comp, aes(x =nivel_academico,y=(..count.. *100)/sum(..count..),fill=nivel_academico)) + geom_bar()+ylab("Porcentaje")+xlab("Nivel academico")+theme(text = element_text(size=9.5))
+```
+
+```{r}
+## Grafico de barras con ggplot2
+ggplot(df.comp, aes(x =estado_civil,y=(..count.. *100)/sum(..count..),fill=estado_civil)) + geom_bar()+ylab("Porcentaje")+xlab("Estado civil")+theme(text = element_text(size=9.5))
+```
+
+```{r}
+## Grafico de barras con ggplot2
+ggplot(df.comp, aes(x =genero,y=(..count.. *100)/sum(..count..),fill=genero)) + geom_bar()+ylab("Porcentaje")+xlab("Genero")+theme(text = element_text(size=9.5))
+```
+
+
+```{r}
+ggplot(data = df.comp, aes(x=genero, y=edad)) +
+  geom_boxplot(aes(colour=genero)) +
+  geom_point() +
+  theme_classic()+
+  ylab("Edad del cliente") +
+  xlab("Genero")+theme(legend.position="none",text = element_text(size=10.5))
+```
+
+
+```{r}
+## Grafico de barras con ggplot2
+ggplot(df.comp, aes(x =ingreso_rango,y=(..count.. *100)/sum(..count..),fill=ingreso_rango)) + geom_bar()+ylab("Porcentaje")+xlab("Rango de ingresos")+theme(text = element_text(size=9.5))
+```
+
+## Texmining 
+
+## Texmining 
+###ANDRE CODIGO
+
+```{r,message=FALSE,warning=FALSE}
+## Librerias para Textmining
+library(tm)
+library(stringr)
+library(NLP)
+
+dataCleaner<-function(text){
+  
+  cleanText <- tolower(text)
+  cleanText <- removePunctuation(cleanText)
+  cleanText <- removeNumbers(cleanText)
+  cleanText <- str_replace_all(cleanText, "[^[:alnum:]]", " ")
+  cleanText <- stripWhitespace(cleanText)
+  
+  return(cleanText)
+}
+
+df.comp$ref1=dataCleaner(df.comp$ref1)
+df.comp$ref2=dataCleaner(df.comp$ref2)
+df.comp$ref3=dataCleaner(df.comp$ref3)
+```
+
+## Limpieza de texto
+
+El proceso de limpieza de texto, dentro del ámbito de text mining, consiste en eliminar del texto todo aquello que no aporte información sobre su temática, estructura o contenido. No existe una única forma de hacerlo, depende en gran medida de la finalidad del análisis y de la fuente de la que proceda el texto.
+
+La finalidad de esta limpieza es poder Tokenizar de forma más optima el texto.
+
+> Tokenizar un texto consiste en dividir el texto en las unidades que lo conforman, entendiendo por unidad el elemento más sencillo con significado propio para el análisis en cuestión, en este caso, las palabras.
+
+Existen múltiples librerías que automatizan en gran medida la limpieza y tokenización de texto, por ejemplo, **tokenizers** o **quanteda**. Sin embargo, creo que se entiende mejor el proceso implemento una función propia que, si bien puede estar menos optimizada, es más transparente. Definir una función que contenga cada uno de los pasos de limpieza tiene la ventaja de poder adaptarse fácilmente dependiendo del tipo de texto analizado.
+
+```{r}
+#limpiar_tokenizar <- function(texto){
+#    nuevo_texto <- str_split(nuevo_texto, " ")[[1]]
+#    # Eliminación de tokens con una longitud < 2
+#    nuevo_texto <- keep(.x = nuevo_texto, .p = function(x){str_length(x) > 1})
+#    return(nuevo_texto)
+#}
+
+library(ANLP)
+datacorpus<- paste(df.comp$ref1)
+datacorpus<- cleanTextData(datacorpus)
+#ngramModel1 <- generateTDM(datacorpus,1)
+#ngramModel2 <- generateTDM(datacorpus,2)
+#ngramModel3 <- generateTDM(datacorpus,3)
+#ngramModel4 <- generateTDM(datacorpus,4)
+
+```
+
+### Ejemplo de uso de la función anterior
+
+```{r}
+
+corpus2 <- VCorpus(VectorSource(datacorpus))
+
+# Prepare n-gram frequencies
+getFreq <- function(tdm) {
+  freq <- sort(rowSums(as.matrix(rollup(tdm, 2, FUN = sum)), na.rm = T), decreasing = TRUE)
+  return(data.frame(word = names(freq), freq = freq))
+}
+
+unigram <- function(x) NGramTokenizer(x, Weka_control(min = 1, max = 1))
+bigram <- function(x) NGramTokenizer(x, Weka_control(min = 2, max = 2))
+trigram <- function(x) NGramTokenizer(x, Weka_control(min = 3, max = 3))
+quadgram <- function(x) NGramTokenizer(x, Weka_control(min = 4, max = 4))
+pentagram <- function(x) NGramTokenizer(x, Weka_control(min = 5, max = 5))
+hexagram <- function(x) NGramTokenizer(x, Weka_control(min = 6, max = 6))
+
+
+library(slam)
+# Get frequencies of most common n-grams in data sample
+#1gram frequency
+freq1 <- getFreq(TermDocumentMatrix(corpus2, control = list(tokenize = unigram))) #with stop words
+#freq1 <- getFreq(removeSparseTerms(TermDocumentMatrix(unicorpus), 0.999)) #without stop words
+#2gram frequency
+freq2 <- getFreq(TermDocumentMatrix(corpus2, control = list(tokenize = bigram))) #with stop words
+#freq2 <- getFreq(TermDocumentMatrix(unicorpus, control = list(tokenize = bigram))) #without stop words
+#3gram frequency
+freq3 <- getFreq(TermDocumentMatrix(corpus2, control = list(tokenize = trigram)))
+#4gram frequency
+freq4 <- getFreq(TermDocumentMatrix(corpus2, control = list(tokenize = quadgram)))
+#5gram frequency
+freq5 <- getFreq(TermDocumentMatrix(corpus2, control = list(tokenize = pentagram)))
+#6gram frequency
+#freq6 <- getFreq(TermDocumentMatrix(corpus, control = list(tokenize = hexagram)))
+#freq4_2 <- getFreq(TermDocumentMatrix(corpus2, control = list(tokenize = quadgram)))
+
+modelsList = list(freq5,freq4,freq3,freq2,freq1) #y luego quedarse con las frases que tienen mas de 1 frecuencia
+```
+
+
+
+```{r}
+######################################################################
+# Plot n-grams
+######################################################################
+
+library(ggplot2)
+library(gridExtra)
+
+plot1<-ggplot(freq1[1:10,], aes(x = reorder(word, freq), y = freq )) + 
+  geom_bar(stat = "identity", color = "black", fill = "grey") +
+  coord_flip() +
+  labs(title = "Frequency 1gram\n", x = "1gram\n", y = "Frequency\n") 
+  
+plot2<-ggplot(freq2[1:10,], aes(x = reorder(word, freq), y = freq )) + 
+  geom_bar(stat = "identity", color = "black", fill = "grey") +
+  coord_flip() +
+  labs(title = "Frequency 2gram\n", x = "2gram\n", y = "Frequency\n") 
+
+plot3<-ggplot(freq3[1:10,], aes(x = reorder(word, freq), y = freq )) + 
+  geom_bar(stat = "identity", color = "black", fill = "grey") +
+  coord_flip() +
+  labs(title = "Frequency 3gram\n", x = "3gram\n", y = "Frequency\n") 
+
+plot4<-ggplot(freq4[1:10,], aes(x = reorder(word, freq), y = freq )) + 
+  geom_bar(stat = "identity", color = "black", fill = "grey") +
+  coord_flip() +
+  labs(title = "Frequency 3gram\n", x = "3gram\n", y = "Frequency\n") 
+
+grid.arrange( plot1, plot2,plot3,plot4, ncol=2)
+```
+
+
+
+```{r}
+######################################################################
+# cloud n-grams
+######################################################################
+library(wordcloud)
+par(mfrow=c(1,3))
+wordcloud(words=freq1$word, freq=freq1$freq, random.order=FALSE);
+title("1-grams Word Cloud without stop words")
+
+wordcloud(words=freq2$word, freq=freq2$freq, random.order=FALSE);
+title("2-grams Word Cloud without stop words")
+
+wordcloud(words=freq3$word, freq=freq3$freq, random.order=FALSE);
+title("3-grams Word Cloud with stop word ")
+```
+
+### Text Mining y  Analísis Cluster
+
+```{r}
+library(tm)         # text mining
+library(RWeka)      # collection of machine learning algorithms
+library(dendextend) # Dendogram (hierarchical clustering)
+library(cluster)    # clustering 
+library(clValid)    # Calculating Dunn index
+library(quanteda)   # Text Mining
+library(tidytext)   # Text Mining and dplyr
+```
+
+
+```{r}
+df.comp1 <- df.comp %>% select(id_trn_ach,ref1,ref2)
+text.ref1 <- df.comp1 %>% unnest_tokens(word, ref1)
+```
+
+
+```{r}
+custom_stop_words <-bind_rows(data_frame(word = c("referencia","pago","pagos","traves"), 
+                                          lexicon = c("custom")),data_frame(word = tm::stopwords("spanish"),lexicon = "custom"))
+```
+
+```{r}
+tidy_trans <- text.ref1  %>%
+  anti_join(custom_stop_words)
+```
+
+```{r}
+library(wordcloud)
+tidy_trans %>%
+  anti_join(custom_stop_words) %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.words = 150))
+```
+
+### Tokenizando con dos y tres palabras
+
+```{r}
+df.comp2 <- df.comp %>% select(id_trn_ach,ref1)
+text.ref2 <- df.comp2 %>% unnest_tokens(bigram, ref1, token = "ngrams", n = 2)
+head(text.ref2)
+```
+
+
+```{r}
+text.ref2 %>%
+  count(bigram, sort = TRUE)
+```
+
+
+```{r}
+bigrams_separated <- text.ref2 %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+bigrams_filtered <- bigrams_separated %>%
+  filter(!word1 %in% custom_stop_words$word) %>%
+  filter(!word2 %in% custom_stop_words $word)
+
+# new bigram counts:
+bigram_counts <- bigrams_filtered %>% 
+  count(word1, word2, sort = TRUE)
+
+bigram_counts
+```
+
+
+
+```{r}
+library(igraph)
+
+(bigram_graph <- text.ref2 %>%
+        separate(bigram, c("word1", "word2"), sep = " ") %>%
+        filter(!word1 %in% custom_stop_words$word,
+               !word2 %in% custom_stop_words$word) %>%
+        count(word1, word2, sort = TRUE) %>%
+        unite("bigram", c(word1, word2), sep = " ") %>%
+        filter(n > 100) %>%
+        graph_from_data_frame()
+)
+```
+
+
+```{r}
+library(ggraph)
+set.seed(123)
+
+a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+
+ggraph(bigram_graph, layout = "fr") +
+        geom_edge_link() +
+        geom_node_point(color = "lightblue", size = 5) +
+        geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+        theme_void()
+```
+
+
+
+
+```{r}
+#trigrams_separated <- df.comp2 %>%
+#unnest_tokens(trigram, ref1, token = "ngrams", n = 3) %>%
+#  separate(trigram, c("word1", "word2", "word3"), sep = " ") %>%
+#  filter(!word1 %in% custom_stop_words$word,
+#         !word2 %in% custom_stop_words$word,
+#         !word3 %in% custom_stop_words$word) %>%
+#         count(word1, word2, word3, sort = TRUE)
+```
+
+
+## Cluster con text mining
+
+```{r}
+
+```
+
+
+## Fuentes de información
+
+<https://www.kaggle.com/themissingsock/n-gram-generation-from-listing-features>
+
+<https://github.com/matthewjdenny/SpeedReader>
+
+<https://cran.r-project.org/web/packages/fastDummies/vignettes/making-dummy-variables.html>
+
+<https://rstudio-pubs-static.s3.amazonaws.com/271085_3772c982c5664206aab04b842a04a761.html>
