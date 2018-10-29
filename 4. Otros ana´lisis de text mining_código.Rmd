@@ -1,0 +1,151 @@
+---
+title: "Text mining Analisis"
+author: "ADA Analytics"
+date:  "27 de octubre de 2018"
+output: html_document
+---
+
+
+<style>
+   tbody tr:nth-child(odd){
+    background-color: #F7FBFF;
+  }
+</style>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Librerias a emplear
+```{r packages}
+library(tm)
+library(knitr)
+library(stringr)
+library(NLP)
+```
+
+## Lectura de datos
+
+```{r load, eval=FALSE}
+load("~/Dataton2018/Data/df.comp.filtrada.RData")
+df.comp<-df.comp2
+rm(df.comp2)
+```
+
+```{r loadwd}
+load("~/Dataton2018/LDAws.RData")
+```
+
+
+## Data cleaning
+
+Se realizo una limpieza de los valores de tipo texto de la data. Esta limpieza incluye:
+
+*se eliminan espacios en blanco, numeros y valores especiales.
+*Se eliminan todos lo "stopword" del español ya que no aportan significado, estos son (de, para ,el, la, etc).
+*se colocan todas el texto en minuscula para evitar diferencias de palabras por este motivo. 
+*se debe realizar stemming, pir ejemplo pago, pagar, pagos, pagan, etc pasan a ser solo "pago".
+*se reemplazaron los valores peridos NA por espacios en blanco. 
+
+Una vez limpuazo los campos de tipo texto concatenan las tres columnas ref1 ref2 y ref3 en un sola.
+
+```{r clean, eval=FALSE}
+
+dataCleaner<-function(text){
+  
+  cleanText <- tolower(text)
+  cleanText <- removePunctuation(cleanText)
+  cleanText <- removeNumbers(cleanText)
+  cleanText <- str_replace_all(cleanText, "[^[:alnum:]]", " ")
+  cleanText <- str_replace_all(cleanText, "_", " ")
+  cleanText <- str_replace_all(cleanText, " na ", " ")
+  cleanText <- str_replace_all(cleanText, "cc", " ")
+  cleanText <- stripWhitespace(cleanText)
+  cleanText <- stemDocument(cleanText, language="spanish")
+
+  
+  return(cleanText)
+}
+
+df.comp$ref1=dataCleaner(df.comp$ref1)
+df.comp$ref2=dataCleaner(df.comp$ref2)
+df.comp$ref3=dataCleaner(df.comp$ref3)
+
+df.comp <- transform(df.comp, text = paste(ref1," ", ref2," ", ref3))
+```
+
+## Preparacion de datacorpus
+
+Los documento en vector corpus contienen los metadatos de las variables de text en el formato requerido para el analisis.
+
+Nota:Se selecciona solo 100.000 registros de la data por motivos de recursos en procesamiento.
+
+```{r corpus, eval=FALSE}
+
+corpus100000 <- VCorpus(VectorSource(df.comp$text[1:100000]))
+datacorpus100000 <- tm_map(corpus100000, removeWords, stopwords("spanish"))
+datacorpus100000<-tm_map(datacorpus100000, content_transformer(tolower))
+dtm100000<- DocumentTermMatrix(datacorpus100000)
+binarydata100000<-inspect(dtm100000)
+
+m100000 <- DocumentTermMatrix(datacorpus100000,
+                        control = list(removeNumbers = TRUE,
+                                       stopwords = TRUE,
+                                       stemming = TRUE))
+
+
+```
+
+
+
+
+# Data analisis
+
+##Formato de la nueva data generada
+
+El proceso genera una base de datos con formato Binario referente a los terminos de cada transaccion.
+
+```{r analisis}
+df.binarydata<-inspect(m100000)
+kable(head(df.binarydata))
+```
+
+
+#Lista todos los de terminos encontrados.
+
+```{r allterms}
+kable(head(Terms(m100000)))
+head(Terms(m100000))
+```
+
+##Lista de terminos usados mas de 1000 veces
+```{r terms100}
+terms100<-as.data.frame(findFreqTerms(m100000, 1000))
+kable(head(terms100))
+```
+
+#Lista de terminos mas Frecuentes
+```{r termsmostFreq}
+termsmostFreq<-findMostFreqTerms(m100000)
+termsmostFreq[1:5]
+```
+
+#Revision de asociaciones principales de palabras
+
+En las siguientes tablas se encuentran las palabras mas asociadas a pagos y facturas. Se realizo una revision de diversos terminos mas comunes con sus asociaciones.
+
+```{r termsassoc}
+#findAssocs(m100000, "pago", 0.3)
+PF<-findAssocs(m100000, c("pag", "factur"), 0.1)
+kable(PF[1],caption = "Pago")
+kable(PF[2],caption = "Factura")
+#row.names(as.list(PF)[2])[1]
+```
+
+
+
+
+
+
+

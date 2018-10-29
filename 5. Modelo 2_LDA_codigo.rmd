@@ -1,0 +1,379 @@
+---
+title: "Topic modeling-LDA"
+author: "ADA Analytics"
+date: "28 de octubre de 2018"
+output:
+  html_document: default
+  pdf_document: default
+---
+<style>
+   tbody tr:nth-child(odd){
+    background-color: #F7FBFF;
+  }
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Latent Dirichlet Allocation (LDA)
+El modelo creado se encuentra basado en una representación de Topic models, específicamente Latent Dirichlet Allocation LDA. El cual es un modelo de tipo probabilístico.
+
+LDA es un modelo bayesiano de tercer nivel en donde la asociación de términos permite la agrupación de los 
+documentos en tópicos.
+
+
+##Paquetes 
+
+```{r packages}
+library(knitr)
+library(textmineR)
+library(tm)
+library(stringr)
+library(NLP)
+library(Matrix)
+```
+
+
+## Lectura de datos
+
+```{r load, eval=FALSE}
+load("~/Dataton2018/Data/df.comp.filtrada.RData")
+df.comp<-df.comp2
+rm(df.comp2)
+```
+
+
+```{r loadwd, echo=FALSE}
+load("~/Dataton2018/LDA/LDA5wd_2.RData")
+```
+
+
+## Limpieza de datos
+
+Se realizo una limpieza de los valores de tipo texto de la data. Esta limpieza incluye:
+
+*se eliminan espacios en blanco, números  y valores especiales.
+*Se eliminan todos lo "stopword" del español ya que no aportan significado, estos son (de, para ,el, la, etc).
+*se colocan todas el texto en minuscula para evitar diferencias de palabras por este motivo. 
+*se debe realizar stemming, pir ejemplo pago, pagar, pagos, pagan, etc pasan a ser solo "pago".
+*se reemplazaron los valores perdidos NA por espacios en blanco. 
+
+Una vez limpuazo los campos de tipo texto concatenan las tres columnas ref1 ref2 y ref3 en un sola.
+
+```{r clean, eval=FALSE}
+
+dataCleaner<-function(text){
+  
+  cleanText <- tolower(text)
+  cleanText <- removePunctuation(cleanText)
+  cleanText <- removeNumbers(cleanText)
+  cleanText <- str_replace_all(cleanText, "[^[:alnum:]]", " ")
+  cleanText <- str_replace_all(cleanText, "_", " ")
+  cleanText <- str_replace_all(cleanText, "na", " ")
+  cleanText <- str_replace_all(cleanText, "cc", " ")
+  cleanText <- stripWhitespace(cleanText)
+  cleanText <- stemDocument(cleanText, language="spanish")
+
+  
+  return(cleanText)
+}
+
+df.comp <- transform(df.comp, text = paste(ref1," ", ref2," ", ref3))
+df.comp$text2=dataCleaner(df.comp$text)
+
+text2 <- df.comp$text2[1:10000]
+
+```
+
+
+##Preparación  de la data para el modelo LDA
+
+Se genera el documento que contiene los termino en formato matrix.
+
+
+```{r preparacion, eval=FALSE}
+dtma <- CreateDtm(doc_vec = text2, # vector con los caracteres de tipo texto
+                  doc_names = df.comp$id_trn_ach[1:10000], # id de cada texto
+                  ngram_window = c(1, 2), # maximo y minomo de bgrams a utilizar
+                  stopword_vec = c(tm::stopwords("spanish"), 
+                                   tm::stopwords("SMART")), 
+                  lower = TRUE, # lowercase 
+                  remove_punctuation = TRUE, 
+                  remove_numbers = TRUE,  
+                  verbose = FALSE, 
+                  cpus = 2) 
+
+```
+
+
+
+##Ajuste del modelo
+
+Para ajustar el modelo se utilizó como Input el documento que contiene los termino en formato matrix, creada anteriormente. En el proceso se crean 100 tópicos que luego se seleccionaran los mas relevantes.
+
+```{r ajuste, eval=FALSE}
+model <- FitLdaModel(dtm = dtma, 
+                     k = 100, 
+                     iterations = 1000, 
+                     alpha = 0.1, 
+                     beta = 0.05, 
+                     cpus = 2) 
+str(model)
+
+```
+
+
+
+##Analisis del ajuste del modelo 
+
+Las métricas  utilizadas se refieren al R cuadrado (`r model$r2r`) y a Likelihood (`r model$ll`).
+
+```{r r2, eval=FALSE}
+
+#R cuadrado
+model$r2 <- CalcTopicModelR2(dtm = dtma, 
+                             phi = model$phi,
+                             theta = model$theta,
+                             cpus = 2)
+
+#Likelihood
+model$ll <- CalcLikelihood(dtm = dtma, 
+                           phi = model$phi, 
+                           theta = model$theta,
+                           cpus = 2)
+
+```
+
+
+
+##Coherecia
+
+Se crea una métrica que analiza la coherencia de los grupos creados, el cual es encuentra basado en teoría probabilística. La coherencia mide que tan asociados se encuentran los valores a un tema, a mayor valor mayor asociación de tema creado las categorías que lo componen. El grafico muestra la coherencia de los 100 tópicos creados.
+
+```{r coeherencia, eval=FALSE}
+model$coherence <- CalcProbCoherence(phi = model$phi, dtm = dtma, M = 5)
+```
+
+```{r coeherenciasumm}
+summary(model$coherence)
+hist(model$coherence, 
+     col= "grey", 
+     main = "Histograma probabilistico de coherencia")
+
+```
+
+
+##Principales terminos de cada grupo
+
+Se indica la inclusión de solo 5 palabras por grupo.
+
+```{r topterms}
+model$top_terms <- GetTopTerms(phi = model$phi, M = 5)
+kable(head(model$top_terms))
+```
+
+# Prevalencia de los grupo
+
+Indica que tan frecuente es un tema en la base de datos. 
+
+```{r prevalencia, eval=FALSE}
+model$prevalence <- colSums(model$theta) / sum(model$theta) * 100
+```
+
+#Etiquetas
+Las etiquetas se de formaron automática basadas en bigramas más probable de los grupos, posteriormente se plantea una lectura y recodificación de cada termino.
+
+```{r labels, eval=FALSE}
+model$labels <- LabelTopics(assignments = model$theta > 0.05, 
+                            dtm = dtma,
+                            M = 1)
+
+model$summary <- data.frame(topic = rownames(model$phi),
+                            label = model$labels,
+                            coherence = round(model$coherence, 3),
+                            prevalence = round(model$prevalence,3),
+                            top_terms = apply(model$top_terms, 2, function(x){
+                              paste(x, collapse = ", ")
+                            }),
+                            stringsAsFactors = FALSE)
+
+```
+
+
+#Nueva tabla con nuevas etiquetas
+
+La siguiente tabla muestra los nombres de los grupos con su respectivos indicadores de coherencia y prevalencia.
+
+```{r clusters}
+model$summary[ order(model$summary$prevalence, decreasing = TRUE) , ][ 1:10 , ]
+
+cluster<-model$summary[ order(model$summary$prevalence, decreasing = TRUE) , ]
+#View(cluster)
+
+kable(head(cluster))
+```
+
+#Prediccion de grupo para cada transaccion
+```{r predicion}
+
+model$phi_prime <- CalcPhiPrime(phi = model$phi,
+                                theta = model$theta)
+
+assignments <- dtma / rowSums(dtma)
+
+assignments <- assignments %*% t(model$phi_prime)
+
+assignments <- as.matrix(assignments) # convert to regular R dense matrix
+
+#head(df.comp)
+
+```
+
+#Comparacion de la asociacion creada una transaccion
+
+Se realizo la revisión de diversos IDs para confirma que la el segmento asignado tiene sentido con los campos de texto. Para la transacción 262081943 se encuentra los valores en las siguientes tablas.
+
+
+
+```{r checkeo}
+
+df.assignments<- as.data.frame(assignments)
+
+colnames(df.assignments)<-model$labels
+df.assignments$segment<-colnames(df.assignments)[max.col(df.assignments,ties.method=c("first"))]
+df.assignments$id_trn_ach <- rownames(df.assignments)
+
+#datos originales
+df.comp[df.comp$id_trn_ach == 226533961, c('text')]
+
+
+#segmento asociado
+df.assignments[df.assignments$id_trn_ach == 226533961,  c('segment')]
+```
+
+
+
+```{r subsetseg}
+
+selected <- df.assignments[, cluster[cluster$coherence>0.4,c("label_1")]]
+
+df.assignments$segmentsmall<-colnames(selected)[max.col(selected,ties.method=c("first"))]
+df.assignments$id_trn_ach <- rownames(df.assignments)
+
+#datos originales
+df.comp[df.comp$id_trn_ach == 226533961, c('text')]
+
+#segmento asociado
+df.assignments[df.assignments$id_trn_ach == 226533961,  c('segmentsmall')]
+```
+
+#Unión de la nueva variable segmento a la base original.
+
+
+```{r join, eval=FALSE}
+library(dplyr)
+
+myvars <- c("id_trn_ach", "segment","segmentsmall")
+df.assignments2 <- df.assignments[myvars]
+df.comp2_10000<-left_join(df.comp[1:10000,], df.assignments2, by = c("id_trn_ach"))
+                
+#head(table(a$segment2))
+
+```
+
+##Limpieza de la nueva data segmento
+Dado el proceso de stemmwords acorta las palabras, se realiza una nueva recodificación de los datos. 
+
+```{r Newdataclean, eval=FALSE}
+df.comp2_10000$segment <-str_replace_all(
+  df.comp2_10000$segment,
+    c(
+      "contract_addreess"="contracto addreess",
+      "ionparageneraciondecertificadosdetradicionylibert_idc"="Transaccion idc",
+      "trans ionparaconsultaporindicedepropietari"="Transaccion consulta idc",
+      "empres_public" = "Empresa Publica",
+      "_" = " ",
+      "pag" = "Pago",
+      "sald"="Saldo",
+      "factur"="Factura",
+      "electron"="Electronico",
+      "servici"="Servicio",
+      "recarg"="Recarga",
+      "onlin"="Online",
+      "compr"="Compra",
+      "referent contrat"="Referencia Contrato",
+      "tarjet credit"="Tarjeta Credito",
+      "cart idc"="Cartera IDC",
+      "Pago tipific" = "Pago"
+    ))
+
+df.comp2_10000$segmentsmall <-str_replace_all(
+  df.comp2_10000$segmentsmall,
+    c(
+      "contract_addreess"="contracto addreess",
+      "ionparageneraciondecertificadosdetradicionylibert_idc"="Transaccion idc",
+      "trans ionparaconsultaporindicedepropietari"="Transaccion consulta idc",
+      "empres_public" = "Empresa Publica",
+      "_" = " ",
+      "pag" = "Pago",
+      "sald"="Saldo",
+      "factur"="Factura",
+      "electron"="Electronico",
+      "servici"="Servicio",
+      "recarg"="Recarga",
+      "onlin"="Online",
+      "compr"="Compra",
+      "referent contrat"="Referencia Contrato",
+      "tarjet credit"="Tarjeta Credito",
+      "cart idc"="Cartera IDC",
+      "Pago tipific" = "Pago"
+    ))
+
+
+condenseMe <- function(vector, threshold = 0.005, newName = "Otros") {
+  toCondense <- names(which(prop.table(table(vector)) < threshold))
+  vector[vector %in% toCondense] <- newName
+  vector
+}
+
+df.comp2_10000$segment2<-condenseMe(df.comp2_10000$segment)
+
+```
+
+#Base final
+
+La base final contiene las nuevas variables de segmento basadas en las variables de texto ref1 ref2 y ref3
+
+```{r finaldata}
+a<-df.comp2_10000[,c("id_trn_ach","id_cliente","fecha","ref1","ref2","ref3","text","segment","segment2","segmentsmall")]
+
+kable(a[1:20,])
+```
+
+
+
+#Grafico de la frecuencia de la clasificacin final 
+
+La variable de segmentacion final de las transacciones contiene diversos NA, en segundo lugar se encuentran principalmente pagos de factura seguido de transacciones idc.
+
+```{r graphs}
+
+#Consultamos el orden de frecuencia de la muestra. En este caso de mayor a menor.
+#Guardamos el orden de los levels en una variable
+orden <- names(sort(table(df.comp2_10000$segmentsmall), decreasing=FALSE))
+
+#Convertimos en un factor con los niveles ordenados 
+df.comp2_10000$nombresegmento<-factor(df.comp2_10000$segmentsmall, levels=orden)
+
+require(ggplot2)
+gra.2<-ggplot(data = df.comp2_10000, aes(x=nombresegmento)) + geom_bar(fill= "steelblue", size = 0.1 ) +coord_flip()
+gra.2
+```
+
+
+
+
+
+
+
