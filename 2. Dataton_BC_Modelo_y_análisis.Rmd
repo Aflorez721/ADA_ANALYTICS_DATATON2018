@@ -1,0 +1,655 @@
+---
+title: "Dataton BC-2018"
+author: "ADA Analytics"
+date: "20 de octubre de 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+```
+
+## Objetivo
+
+1. Implementar un modelo análitico para la categorarización de las transacciones provenientes del canal PSE basados en el comportamiento de transacciones de los clientes Bancolombia.
+
+2. Proponer un modelo análitico para integrarse a un PFM para darle mayor valor agregado e incrementar el nivel de adopción de éstos.
+
+## Lectura de datos
+
+A continuación se carga la data que representa la muestra aleatoria de las transacciones de  37562 clientes de BC. 
+
+```{r}
+load("df.comp.m.21102018.RData")
+## La data se llama df.comp.m
+```
+
+La data de la muestra se renombra como *df.comp* para comodidad, ya que los algortimos iniciales que habiamos desarrollados llevaban este nombre de manera estandar. 
+
+```{r}
+#Renombrando la data
+df.comp <- df.comp.m
+rm(df.comp.m) # removiendo la data de df.comp.m para mejorar espacio en la RAM.
+```
+
+## Análisis descriptivo de variables
+
+
+### Valores perdidos
+
+
+La siguiente función nos permite dar un vistazo rápido al nivel de valores perdidos en los datos. 
+
+```{r}
+# Función resumen de valores perdidos.
+
+prop.na <- function(dataframe) {
+	m <- sapply(dataframe, function(x) {
+		data.frame(
+			nmiss=sum(is.na(x)), 
+			n=length(x), 
+			propnas=sum(is.na(x))/length(x)
+		)
+	})
+	d <- data.frame(t(m))
+	d <- sapply(d, unlist)
+	d <- as.data.frame(d)
+	d$variable <- row.names(d)
+	row.names(d) <- NULL
+	d <- cbind(d[ncol(d)],d[-ncol(d)])
+	return(d[order(d$propnas,decreasing = TRUE), ])
+}
+
+```
+
+Aplicando la función resumen de valores perdidos sobre la data de muestra.
+
+```{r}
+df.na <- prop.na(df.comp)
+head(df.na)
+```
+
+Al tener el número de valores perdidos de cada variable en la data de transacciones y personas, se puede observar que las variables ref3, ref2 y tipo_vivienda son las que presentan la mayor cantidad de valores perdidos. Incluso la variable referencia 3  esta completamente vacia, por lo que no aporta nada de información.
+
+```{r}
+df.na.1 <- df.na[order(df.na$nmiss,decreasing = T),]
+require(pander)
+pander(df.na.1)
+```
+
+```{r}
+## Gráfico de resumen de valores perdidos
+gra.2<-ggplot(data = df.na.1, aes(x=variable, y=nmiss)) + geom_col(colour= "black", size = 0.2 ) +coord_flip()
+gra.2
+```
+
+
+### Estadísticas descriptivas de las variables
+
+#### Variable valor_trx
+
+```{r}
+## Estadísticos de resumen en R
+summary(df.comp$valor_trx)
+```
+
+```{r}
+## Número de valores perdidos
+sum(is.na(df.comp$valor_trx))
+```
+
+**Valores atipicos**
+
+En el siguiente boxplot se puede apreciar una gran presencia de valores atípicos, inclusive son transacciones que superan los 100 millones de pesos, siendo valores bastante atípicos debido aque la plataforma de PSE a pesar de poseer opciones para modificar los montos o el número de transacciones que puede realizar diariamente por este canal.
+
+
+```{r}
+# Boxplot agrupado por genero
+library(Rmisc)
+
+NotFancy <- function(l) {
+ l <- format(l, scientific = FALSE)
+ parse(text=l)
+}
+
+p1 <- ggplot(data = df.comp, aes(x="", y=valor_trx)) + 
+            scale_y_continuous(labels=NotFancy) +
+            geom_point(alpha=0.2) +
+            geom_boxplot(outlier.size=4, outlier.colour='blue', alpha=0.1)
+
+plot(p1)
+```
+
+Una primria limpieza se realizó al filtrar la data donde el monto de la transacciones sea inferior a 50 millones de pesos. Sin embargo esto no resulta muy poco efectivo ya que se sigue evidenciando un gran volumen de valores atípicos, y esto también distrociona los valores atípicos inderiores.
+
+```{r}
+df.comp1 <- df.comp[df.comp$valor_trx<= 50000000,]
+```
+
+
+```{r}
+# Boxplot 
+p2 <- ggplot(data = df.comp1, aes(x="", y=valor_trx)) + 
+            scale_y_continuous(labels=NotFancy) +
+            geom_point(alpha=0.2) +
+            geom_boxplot(outlier.size=4, outlier.colour='blue', alpha=0.1)
+
+plot(p2)
+```
+
+Por lo cuál se decide filtrar esta variable a montos cercanos al limite propuesto por PSE por defecto ($1.200.000 por transacción diaria) considerandose el valor de 1.2 millones.
+ 
+```{r}
+df.comp2 <- df.comp[df.comp$valor_trx<= 1200000,]
+```
+
+
+```{r}
+# Boxplot 
+p3 <- ggplot(data = df.comp2, aes(x=" ", y=valor_trx)) + 
+            scale_y_continuous(labels=NotFancy) +
+            geom_point(alpha=0.2) +
+            geom_boxplot(outlier.size=4, outlier.colour='blue', alpha=0.1)
+
+plot(p3)
+```
+
+
+
+```{r}
+outlier_values <- boxplot.stats(df.comp2$valor_trx)$out  # outlier values
+head(outlier_values)
+```
+
+**Respaldando la data filtrada**
+
+```{r}
+# Guardando el DataFrame como  RData format
+save(df.comp2, file = "df.comp.filtrada.RData")
+```
+
+```{r}
+## Renombrando la data
+df.comp <- df.comp2
+```
+
+
+### Sector del ente juridico o natural por donde se emplea PSE.
+
+Respecto a la variable Sector de la empresa por donde se emplea el canal de PSE, los datos indican que se tiene muy poca información de ellos con una categoria "\n", que es indicativo de desconocer la información, que supera el 65%. Mientras que la poca información que se tiene de estas empresas se centra principalmente en *MEDIOS DE COMUNICACION*, *SERVICIOS FINANCIEROS*, *RECURSOS NATURALES* y *SERVICIOS NO FINANCIEROS*.
+
+```{r, warning=FALSE, message=FALSE}
+## Grafico de barras con ggplot2
+ggplot(df.comp, aes(x =sector,y=(..count.. *100)/sum(..count..),fill=sector)) + geom_bar()+ylab("Porcentaje")+xlab("Sector")+theme(text = element_text(size=9.5))
+```
+
+
+### Segmentación Estructural de los clientes por los Ingresos y su Tamaño Comercial.
+
+Para la variable segmentación estructural, la información que se tiene indica que los mayores ingresos son los reportados por los cliente del grupo *EMPRENDEDOR*, que supera el 40%, seguido por los clientes *PREFERENCIAL* y *PERSONAL*. Para los clientes del grupo *Personal Plus* no se tiene información.
+
+
+```{r, warning=FALSE}
+## Grafico de barras con ggplot2
+ggplot(df.comp, aes(x =seg_str1,y=(..count.. *100)/sum(..count..),fill=seg_str1)) + geom_bar()+ylab("Porcentaje")+xlab("Segmento")+theme(text = element_text(size=9.5))
+```
+
+### Oupación de los clientes.
+
+Respecto a la ocupacion de los clientes, la data indica que se tiene información referente a más de un 60% de los clientes de Bancolombia que son *SOCIOS O EMPLEADOS*.
+
+```{r, warning=FALSE, message=FALSE}
+## Grafico de barras con ggplot2
+ggplot(df.comp, aes(x =ocupacion1,y=(..count.. *100)/sum(..count..),fill=ocupacion1)) + geom_bar()+ylab("Porcentaje")+xlab("Ocupación")+theme(text = element_text(size=9.5))
+```
+
+### Tipo de Vivienda.
+
+Para la variable Tipo de Vivienda se tiene muy poca información ya que existe más de un 40% de valores faltantes, que es indicativo de desconocer el tipo de vivienda de los clientes. De la poca información que se tiene más del 30% de los clientes poseen vivienda del tipo *FAMILIAR* y más de un 10% de los clientes tienen vivienda *PROPIA*.
+
+
+```{r}
+## Grafico de barras con ggplot2
+ggplot(df.comp, aes(x =tipo_vivienda,y=(..count.. *100)/sum(..count..),fill=tipo_vivienda)) + geom_bar()+ylab("Porcentaje")+xlab("Tipo de vivienda")+theme(text = element_text(size=9.5))
+```
+
+### Nivel Academico.
+
+Respecto a la variable Nivel Academico se tiene que en la data que más de la mitad de los clientes tienen una formación *UNIVERSITARIA*, son muy pocos los clientes que no tienen ningún nivel academico.
+
+```{r,message=FALSE, warning=FALSE}
+## Grafico de barras con ggplot2
+ggplot(df.comp, aes(x =nivel_academico1,y=(..count.. *100)/sum(..count..),fill=nivel_academico1)) + geom_bar()+ylab("Porcentaje")+xlab("Nivel academico")+theme(text = element_text(size=9.5))
+```
+
+### Estado Civil
+
+De la información obtenida para la variable Estado Civil se tiene que casi la mitad de los clientes son *SOLTEROS*, y que un 30% son *CASADOS* y el 20% restantes de los clientes son *DIVORCIADO*,*VIUDO*,*DESCONOCCE*,*OTRO* o *NO INFORMA*.
+
+
+```{r,message=FALSE, warning=FALSE}
+## Grafico de barras con ggplot2
+ggplot(df.comp, aes(x =estado_civil1,y=(..count.. *100)/sum(..count..),fill=estado_civil1)) + geom_bar()+ylab("Porcentaje")+xlab("Estado civil")+theme(text = element_text(size=9.5))
+```
+
+### Variable genero
+
+Para la variable Genero se tiene que de la información total obtenida en la muestra de los clientes de Bancolombia se encuentran divididos equitativamente en clientes del Genero *Femenino* (0) y *Masculino*(1), siendo sólo por un pequeño porcentaje superior los clientes del Genero *Femenino*.
+
+```{r,message=FALSE, warning=FALSE}
+## Grafico de barras con ggplot2
+ggplot(df.comp, aes(x =genero1,y=(..count.. *100)/sum(..count..),fill=genero1)) + geom_bar()+ylab("Porcentaje")+xlab("Genero")+theme(text = element_text(size=9.5))
+```
+
+### Rango de Ingresos.
+
+Respecto a la variable Rango de Ingresos se tiene que aproximadamente más del 20% de los clientes poseen ingresos de entre *1.1 a 2.2 MM*, más de un 15% de los clientes tienen Ingresos de entre *5.5 a 6.6. MM*. En general se tiene que el Mayor Porcentaje de los clientes tienen buenos Ingresos.
+
+```{r}
+## Grafico de barras con ggplot2
+ggplot(df.comp, aes(x =ingreso_rango1,y=(..count.. *100)/sum(..count..),fill=ingreso_rango1)) + geom_bar()+ylab("Porcentaje")+xlab("Rango de ingresos")+theme(text = element_text(size=9.5))
+```
+
+## Text Mining 
+
+Como una primera aproximación al uso de la información contenida en las variables *ref1,ref2 y descripción*, nos apoyaremos en Texmining.
+
+> **La minería de texto** o text mining se engloba dentro de las técnicas y modelos de minería de datos.Donde se empplea el análisis matemático para deducir patrones y tendencias que existen entre las palabras, patrones que no pueden detectarse mediante una exploración tradicional de los datos porque las relaciones son demasiado complejas o por el volumen de datos que se maneja.
+
+> **Nota:** No se emplea la variable ref3, debido a que esta no posee muy poca o ninguna información.
+
+Y dado que en la minería de texto obtenemos información nueva a partir de grandes cantidades de texto, en la que la información suele estar no estructurada. en esta sección nos enfocamos por entender las palabras claves más usadas en las transacciones y como estas nos pueden aportar información de gran valor que es necesaria para el modelo de separación de las distintas categorias. 
+
+### Limpieza de texto
+
+El proceso de limpieza de texto, dentro del ámbito de text mining, consiste en eliminar del texto todo aquello que no aporte información sobre su temática, estructura o contenido. No existe una única forma de hacerlo, depende en gran medida de la finalidad del análisis y de la fuente de la que proceda el texto.
+
+La finalidad de esta limpieza es poder Tokenizar de forma más optima el texto.
+
+> Tokenizar un texto consiste en dividir el texto en las unidades que lo conforman, entendiendo por unidad el elemento más sencillo con significado propio para el análisis en cuestión, en este caso, las palabras.
+
+
+Existen múltiples librerías que automatizan en gran medida la limpieza y tokenización de texto, por ejemplo, **tokenizers** o **quanteda**. Sin embargo, estas librerias se orientan principalmente a especializarse en textos en ingles, por lo debemos realizar un  proceso para implemento una función que se adapte al español, si bien puede estar menos optimizada, es más transparente. Definir una función que contenga cada uno de los pasos de limpieza tiene la ventaja de poder adaptarse fácilmente dependiendo del tipo de texto analizado.
+
+```{r,message=FALSE,warning=FALSE}
+# Librerias
+library(knitr)
+library(stringr)
+library(NLP)
+library(tm)
+
+dataCleaner<-function(text){
+  
+  cleanText <- tolower(text)
+  cleanText <- removePunctuation(cleanText)
+  cleanText <- removeNumbers(cleanText)
+  cleanText <- str_replace_all(cleanText, "[^[:alnum:]]", " ")
+  cleanText <- str_replace_all(cleanText, "_", " ")
+  cleanText <- str_replace_all(cleanText, "na"," ")
+  cleanText <- str_replace_all(cleanText, "cc", " ")
+  cleanText <- stripWhitespace(cleanText)
+  #cleanText <- stemDocument(cleanText, language="spanish")
+
+  
+  return(cleanText)
+}
+
+```
+
+Se realizo una limpieza de los valores de tipo texto de la data. Esta limpieza incluye:
+
+* Se eliminan espacios en blanco, numeros y valores especiales. 
+* Se eliminan todos lo "stopword" del español ya que no aportan significado, estos son (de, para ,el, la, etc). 
+* Se colocan todo el texto en minuscula para evitar diferencias de palabras por este motivo. se debe realizarademás un stemming, por ejemplo pago, pagar, pagos, pagan, etc pasan a ser solo "pago". *se reemplazaron los valores peridos NA por espacios en blanco.
+
+Una vez limpuado los campos de tipo texto concatenan las tres columnas ref1 ref2 y ref3 en un sola para optimizar las asociaones de palabras.
+
+```{r}
+# aplicando la función de limpieza de datos
+df.comp$ref1=dataCleaner(df.comp$ref1)
+df.comp$ref2=dataCleaner(df.comp$ref2)
+df.comp$ref3=dataCleaner(df.comp$ref3)
+df.comp <- transform(df.comp, text = paste(ref1,ref2))
+```
+
+El siguiente paso es transformar el texto en una estructuración de tipo *corpus*, con el cual se sacarán las palabras más frecuentes empleadas por los agentes que emplean el canal PSE. 
+
+```{r,message=FALSE,warning=FALSE}
+library(ANLP)
+datacorpus<- paste(df.comp$text)
+datacorpus<- cleanTextData(datacorpus)
+#ngramModel1 <- generateTDM(datacorpus,1)
+#ngramModel2 <- generateTDM(datacorpus,2)
+#ngramModel3 <- generateTDM(datacorpus,3)
+#ngramModel4 <- generateTDM(datacorpus,4)
+```
+
+Una vez el texto este estructurado de forma correcta, se procede a obtener los unigramas, bigramas y trigramas a explorar para la ditribución de las frecuencias en el uso de las palabras.
+
+
+```{r}
+
+corpus2 <- VCorpus(VectorSource(datacorpus))
+
+# Prepare n-gram frequencies
+getFreq <- function(tdm) {
+  freq <- sort(rowSums(as.matrix(rollup(tdm, 2, FUN = sum)), na.rm = T), decreasing = TRUE)
+  return(data.frame(word = names(freq), freq = freq))
+}
+
+unigram <- function(x) NGramTokenizer(x, Weka_control(min = 1, max = 1))
+bigram <- function(x) NGramTokenizer(x, Weka_control(min = 2, max = 2))
+trigram <- function(x) NGramTokenizer(x, Weka_control(min = 3, max = 3))
+quadgram <- function(x) NGramTokenizer(x, Weka_control(min = 4, max = 4))
+pentagram <- function(x) NGramTokenizer(x, Weka_control(min = 5, max = 5))
+hexagram <- function(x) NGramTokenizer(x, Weka_control(min = 6, max = 6))
+
+
+library(slam)
+# Get frequencies of most common n-grams in data sample
+#1gram frequency
+freq1 <- getFreq(TermDocumentMatrix(corpus2, control = list(tokenize = unigram))) #with stop words
+#freq1 <- getFreq(removeSparseTerms(TermDocumentMatrix(unicorpus), 0.999)) #without stop words
+#2gram frequency
+freq2 <- getFreq(TermDocumentMatrix(corpus2, control = list(tokenize = bigram))) #with stop words
+#freq2 <- getFreq(TermDocumentMatrix(unicorpus, control = list(tokenize = bigram))) #without stop words
+#3gram frequency
+freq3 <- getFreq(TermDocumentMatrix(corpus2, control = list(tokenize = trigram)))
+#4gram frequency
+freq4 <- getFreq(TermDocumentMatrix(corpus2, control = list(tokenize = quadgram)))
+#5gram frequency
+freq5 <- getFreq(TermDocumentMatrix(corpus2, control = list(tokenize = pentagram)))
+#6gram frequency
+#freq6 <- getFreq(TermDocumentMatrix(corpus, control = list(tokenize = hexagram)))
+#freq4_2 <- getFreq(TermDocumentMatrix(corpus2, control = list(tokenize = quadgram)))
+
+modelsList = list(freq5,freq4,freq3,freq2,freq1) #y luego quedarse con las frases que tienen mas de 1 frecuencia
+```
+
+
+
+```{r, message=FALSE,warning=FALSE}
+######################################################################
+# Plot n-grams
+######################################################################
+
+library(ggplot2)
+library(gridExtra)
+
+plot1<-ggplot(freq1[1:10,], aes(x = reorder(word, freq), y = freq )) + 
+  geom_bar(stat = "identity", color = "black", fill = "grey") +
+  coord_flip() +
+  labs(title = "Frequency 1gram\n", x = "1gram\n", y = "Frequency\n") 
+  
+plot2<-ggplot(freq2[1:10,], aes(x = reorder(word, freq), y = freq )) + 
+  geom_bar(stat = "identity", color = "black", fill = "grey") +
+  coord_flip() +
+  labs(title = "Frequency 2gram\n", x = "2gram\n", y = "Frequency\n") 
+
+plot3<-ggplot(freq3[1:10,], aes(x = reorder(word, freq), y = freq )) + 
+  geom_bar(stat = "identity", color = "black", fill = "grey") +
+ coord_flip() +
+  labs(title = "Frequency 3gram\n", x = "3gram\n", y = "Frequency\n") 
+plot4<-ggplot(freq4[1:10,], aes(x = reorder(word, freq), y = freq )) + 
+  geom_bar(stat = "identity", color = "black", fill = "grey") +
+  coord_flip() +
+  labs(title = "Frequency 3gram\n", x = "3gram\n", y = "Frequency\n") 
+
+##grid.arrange( plot1, plot2,plot3,plot4, ncol=3)
+```
+
+Para la frecuencia de palabras de forma unitaria (unigrama), las palabras que más se repiten en el texto son las asociadas a pago, factura, pse, recargas, transferencias, referentes de pago, saldos, compra y Medellín. Aunque existen muchas más, estas son las de mayor frecuencia.
+
+
+```{r}
+grid.arrange(plot1)
+```
+
+Para la frecuencia de dos palabras (bigrama), las palabras que más se repiten en el texto son las asociadas a pago de, de factura, de salud, meedellín pse, express no,entreo otros. Siendo palabras que ya pueden ir dando forma al conceto de las  categorias a conformar para cada una de las transacciones.
+
+```{r}
+grid.arrange( plot2)
+```
+
+Para los trigramas, se resaltan la combinación para empresas públicas de medellín, esp, factura postpago, pagos relacionados con liberty seguros y pagos de salud.
+
+```{r}
+grid.arrange(plot3)
+```
+
+A continuación se presenta un resumen más completo de las palabras o combinación de ellas que suelen presentarse con mayor frecuencia.
+
+```{r, message=FALSE,warning=FALSE}
+######################################################################
+# cloud n-grams
+######################################################################
+library(wordcloud)
+par(mfrow=c(1,3))
+wordcloud(words=freq1$word, freq=freq1$freq, random.order=FALSE);
+#title("1-grams Word Cloud without stop words")
+
+wordcloud(words=freq2$word, freq=freq2$freq, random.order=FALSE);
+#title("2-grams Word Cloud without stop words")
+
+wordcloud(words=freq3$word, freq=freq3$freq, random.order=FALSE);
+#title("3-grams Word Cloud with stop word ")
+```
+
+## Text Mining y  Analísis Cluster
+
+Ya con un análisis preliminar de text mining, lograndose identificar palabras o combinaciones de estas que brindan información del tipo de transacción y dan sentido a una categoria  a conformar, se procede a generar una data que contemple el uso de las palabras más frecuentes para emlear, para posteriormente generar cluster que representen las categorias de las transacciones.
+
+```{r,message=FALSE,warning=FALSE}
+## Librerias.
+library(tm)         # text mining
+library(RWeka)      # collection of machine learning algorithms
+library(dendextend) # Dendogram (hierarchical clustering)
+library(cluster)    # clustering 
+library(clValid)    # Calculating Dunn index
+library(quanteda)   # Text Mining
+library(tidytext)   # Text Mining and dplyr
+```
+
+
+```{r}
+## Consultado la data de text
+df.comp1 <- df.comp %>% select(id_trn_ach,ref1)
+text.ref1 <- df.comp1 %>% unnest_tokens(word, ref1)
+```
+
+Y como en el análisis anterior solo se realizo una inspección de las palabras empleadas, existen palabras que no generan ningún valor, las cuales se eliminarán en el siguiente paso.
+
+
+```{r}
+## Vector de palabras a quitar (stopwords)
+custom_stop_words <-bind_rows(data_frame(word = c("referencia","pago","pagos","traves", "a","al","enero","febrero","marzo","abril","mayo","junio","julio","agoosto","septiembre","octubre","noviembre","diciembre"), 
+                                          lexicon = c("custom")),data_frame(word = tm::stopwords("spanish"),lexicon = "custom"))
+```
+
+```{r, message=FALSE}
+## Limpiando los datos de las palabras stopwords
+tidy_trans <- text.ref1  %>%
+  anti_join(custom_stop_words)
+```
+
+Pero aún cuando se emplean librerias o listas de stop_words, se debe estar muy pendientes de que no se esten yendo terminos o frases sin sentido, o que poco pudiesen beneficiar el modelo.
+
+```{r}
+t<- as.data.frame(table(tidy_trans$word))
+head(t)
+```
+
+Por lo que se hace un pre-filtrado con las palabras que tengan 5000 o más repeticiones, más que todo por los pocos recursos de procesamiento con los que contamos actualmente.
+
+```{r}
+t1 <-t[t$Freq>=5000,]
+colnames(t1)<-c("word","Freq")
+head(t1,n=15)
+```
+
+Y aún así suelen quedar palabras con poco sentido, o que no aportan en nada al análisis como por ejemplo: aa,aaa,aã. 
+
+
+```{r, message=FALSE, warning=FALSE}
+## Seleccionando las palabras de ínteres
+tidy_trans1 <- inner_join(tidy_trans,t1)
+##  Quitando la variable frecuencia de la data
+tidy_trans1 <-tidy_trans1[,-3]
+```
+
+Ahora, la siguiente función convierte cada palabra en un booleano.
+
+```{r}
+## install.packages("fastDummies")
+results <- fastDummies::dummy_cols(tidy_trans1, select_columns = "word")
+```
+
+Lo siguiente es quitar los duplicados que la lista de palabras dejaba, por lo que se hace una suma por transacción en cada una de las palabras encontradas.
+
+```{r}
+results1<- results %>% select(-word)
+
+results2 <- results1 %>% group_by(id_trn_ach) %>% summarise_all(funs(sum))
+```
+
+```{r}
+#Removiendo las tadas que no se usaran
+rm(results1,results)
+```
+
+
+
+**Observación:** Se pudiese pensar que para compensar que no se pueden contar con todas las palabras con alta frecuencia usada en los comentarios, se procede a buscar las combinaciones por dos palabras que sean de mayor frecuencia en los comentarios de texto, sin embaro los unigramas en forma booleana compensan hasta cierto punto el no usar los bigramas, dado que recogen la firomación.
+
+
+### Unificando las datas de texto y la data de transacciones
+
+Ahora, para realizar el modelo de cluster, se realiza un inner_join para solo aprovechar la información de las palabras que más frecuencia poseen en los comentarios de ref1 y ref2.
+
+```{r}
+df.clus <- left_join(df.comp,results2, by="id_trn_ach")
+dim(df.clus)
+```
+
+AHora se pueden también aprovechar los datos que arroja la fecha de la transacción. Especialmente el día, porque tenemos la hipotesis de que existen transacciones que se suelen reslizar en ciertas ventanas de tiempo que tienen a ser recurrentes como lo es el pago de servicios públicos o el pago del servicio teléfonico.
+
+```{r, message=FALSE, warning=FALSE}
+library(lubridate)
+df.clus$dia <- day(df.clus$fecha) #Calculando el día del mes
+```
+
+### Imputando a cero las variables Booleanas
+
+La siguiente función esta diseñada para imputar por cero los valores perdidos *NA*.
+
+```{r}
+## Función para sustituir el Na por un valor de cero
+imputacero <- function(x){
+    y <- ifelse(is.na(x),0,x)
+}
+```
+
+
+```{r}
+## Aplicando la función imputa cero
+columnas <- 21:108 ## Posición de columnas a imputar
+df.clus[,columnas]<- lapply(df.clus[,columnas],imputacero)
+```
+
+
+### Recodificando las variables faltantes
+
+```{r, message=FALSE, warning=FALSE}
+## Recodificando las variables categorias a numericas
+library(car)
+df.clus$sector1 <- ifelse(df.clus$sector=="\\N",-99, ifelse(is.na(df.clus$sector),-99,ifelse(df.clus$sector=="AGROINDUSTRIA",1,ifelse(df.clus$sector=='COMERCIO',2, ifelse(df.clus$sector=='CONSTRUCCION',3,ifelse(df.clus$sector=='GOBIERNO',4,ifelse(df.clus$sector=='MANUFACTURA INSUMOS',5,ifelse(df.clus$sector=='MEDIOS DE COMUNICACION', 6,ifelse(df.clus$sector=='PERSONAS',7,ifelse(df.clus$sector=='RECURSOS NATURALES',8,ifelse(df.clus$sector=='SERVICIOS FINANCIEROS',9,ifelse(df.clus$sector=='SERVICIOS NO FINANCIEROS',10,-99))))))))))))
+
+df.clus$subsector <- ifelse(df.clus$subsector == "\\N","Sin_info", ifelse(is.na(df.clus$subsector),"Sin_info",df.clus$subsector))
+```
+
+```{r}
+## Codificando la variable tipo_vivienda
+df.clus$tipo_vivienda1 <- ifelse(df.clus$tipo_vivienda =="1",-99,ifelse(df.clus$tipo_vivienda =="F",1,ifelse(df.clus$tipo_vivienda =="A",2,ifelse(df.clus$tipo_vivienda =="R",2,ifelse(df.clus$tipo_vivienda =="I",10,ifelse(df.clus$tipo_vivienda =="P",3,ifelse(df.clus$tipo_vivienda =="0",3,-99)))))))
+```
+
+
+```{r}
+## Volviendo dummys las variables de subsector
+df.clus1 <-fastDummies::dummy_cols(df.clus, select_columns = c("subsector"))
+```
+
+### Cluster con CLARA
+
+
+CLARA (CLustering LARge Applications) se basa en el enfoque de muestreo para manejar grandes conjuntos de datos. En lugar de encontrar medoides (utiliza medianas) para todo el conjunto de datos, CLARA extrae una pequeña muestra del conjunto de datos y aplica el algoritmo PAM para generar un conjunto óptimo de medoides para la muestra. La calidad de los medoides resultantes se mide por la disimilitud promedio entre cada objeto en todo el conjunto de datos D y el medoide de su agrupación, definida como la siguiente función de costo
+
+
+```{r, message=FALSE,warning=FALSE}
+# respaldando la variable id_trn_ach
+rownames(df.clus1) <- df.clus1$id_trn_ach
+```
+
+Ahora se seleccionan solo las variables numericas o seudonumericas(recodificadas) de la data para realizar los Cluster.
+
+
+
+```{r}
+# seleccionando variables númericas
+df.clara <- na.omit(df.clus1[,c(5,12:18,21:153)])
+```
+
+Aunque en este punto se necesita de una gran cantidad de memoria del computador, por lo que se corrio previamente el algoritmo de CLARA, para poder generar el reporte.
+
+```{r, message=FALSE,warning=FALSE}
+# Compute CLARA
+#clara.res <- clara(df.clara, 15, samples = 150, pamLike = TRUE)
+#save(clara.res, file = "mode_clara.rda")
+#load(file = "mode_clara.rda")
+```
+
+
+```{r,}
+library(factoextra)
+# Cluster plot
+#plot.clara <-fviz_cluster(clara.res, stand = F,geom = "point",  pointsize = 1)
+#save(plot.clara, file = "plot_clara.rda")
+load(file = "plot_clara.rda")
+print(plot.clara)
+```
+
+Ahora, respaldamos la data con los cluster calculados, para posteriormente darle un sentido a los mismos en base a las word en referencia, sector y subsector que predominen en cada uno de los cluster.
+
+```{r, eval=FALSE}
+dd <- cbind(df.clara, cluster = clara.res$cluster)
+dd$id_id_trn_ach <- rownames(df.clara)
+head(dd, n = 4)
+```
+
+
+```{r}
+# Guardando el DataFrame como  RData format
+#save(dd, file = "df.cluster.RData")
+load(file = "df.cluster.RData")
+head(dd[,c("id_id_trn_ach","cluster")],n=10)
+```
+
+La distribución porcentual de los cluster de las transacciones hallados se presentan en el siguiente gráfico, donde los cluster: 1,3,4,8 y 12, son los que presentan una mayor proporción.
+
+```{r,message=FALSE, warning=FALSE}
+## Grafico de barras con ggplot2
+ggplot(dd, aes(x =cluster,y=(..count.. *100)/sum(..count..),fill=cluster)) + geom_bar()+ylab("Porcentaje")+xlab("Cluster de transacción")+theme(text = element_text(size=9.5))
+```
+
+
+
+## Conclusiones y Recomendaciones
+
+1. Una recomendación en nuestros hallazgos, es el combinar la metodología de textming con clustes y LDA para obtener un mejor modelo de clasificación.
+
+2. El modelo presentado en este informe no contempla la presencia de valores atípicos en las transacciones, por lo que de deben implementar algoritmos para que modelen las transacciones para valores extremos en la data.
+
+2. Aún nos queda el pendiente el poder realizar una implementación que sea predictiva ante nuevas transacciones con entes nuevo que empleen PSE y que no se encuentran en la data.
