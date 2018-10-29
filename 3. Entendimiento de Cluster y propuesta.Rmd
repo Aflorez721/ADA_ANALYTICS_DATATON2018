@@ -1,0 +1,115 @@
+---
+title: "3. Entendiendo los Cluster y propuesta valor"
+author: "ADA Analytics"
+date: "28 de octubre de 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+En esta sección, se buscar darle sentido a los cluster a través de nubes de palabras y correlaciones. 
+
+## Lectura de los datos
+
+```{r}
+## Lectura de datos
+load(file = "df.cluster.RData") ## Datos del Cluster: dd
+load(file = "df.comp.filtrada.RData") ## Datos de transacciones filtradas
+```
+
+## Paquetes a emplear
+
+```{r}
+library(tidyverse)
+```
+
+## Combinando las datas
+
+Se combinan las datas donde se tienen el Cluster y la data prefiltrada en la sección 3.
+
+```{r}
+dd1 <- dd[,c("id_id_trn_ach","cluster")]
+df <- inner_join(df.comp2,dd1, by=c("id_trn_ach"= "id_id_trn_ach"))
+```
+
+## Análisis de texto por cada cluster
+
+Ahora, para darle sentido a los cluster, se arealiza uns inspección de texto.
+
+```{r,message=FALSE,warning=FALSE}
+# Librerias
+library(knitr)
+library(stringr)
+library(NLP)
+library(tm)         # Text Mining
+library(tidytext)   # Text Mining and dplyr
+
+dataCleaner<-function(text){
+  
+  cleanText <- tolower(text)
+  cleanText <- removePunctuation(cleanText)
+  cleanText <- removeNumbers(cleanText)
+  cleanText <- str_replace_all(cleanText, "[^[:alnum:]]", " ")
+  cleanText <- str_replace_all(cleanText, "_", " ")
+  cleanText <- str_replace_all(cleanText, "na"," ")
+  cleanText <- str_replace_all(cleanText, "cc", " ")
+  cleanText <- stripWhitespace(cleanText)
+  #cleanText <- stemDocument(cleanText, language="spanish")
+
+  
+  return(cleanText)
+}
+```
+
+```{r}
+# aplicando la función de limpieza de datos
+df$ref1=dataCleaner(df$ref1)
+df$ref2=dataCleaner(df$ref2)
+df$ref3=dataCleaner(df$ref3)
+df <- transform(df, text = paste(ref1,ref2))
+```
+
+
+```{r}
+## Consultado la data de text
+df$cluster1 <- as.factor(df$cluster)
+df.comp1 <- df %>% select(cluster1,text)
+text.ref1 <- df %>% unnest_tokens(word,text)
+
+## Stopwors 
+custom_stop_words <-bind_rows(data_frame(word = c("referencia","pago","pagos","traves", "a","al","enero","febrero","marzo","abril","mayo","junio","julio","agoosto","septiembre","octubre","noviembre","diciembre","na"), 
+                                          lexicon = c("custom")),data_frame(word = tm::stopwords("spanish"),lexicon = "custom"))
+
+## Limpiando los datos de las palabras stopwords
+tidy_trans <- text.ref1  %>%
+  anti_join(custom_stop_words)
+```
+
+```{r}
+head(tidy_trans)
+```
+
+
+## Word Clouds
+
+```{r}
+library(wordcloud)
+library(RColorBrewer)
+
+wordcloud_custom <- function(grupo, df){
+  print(grupo)
+  wordcloud(words = df$word, freq = df$frecuencia,
+            max.words = 400, random.order = FALSE, rot.per = 0.35,
+            colors = brewer.pal(8, "Dark2"))
+}
+```
+
+```{r, message=FALSE,warning=FALSE}
+df_grouped <- tidy_trans %>% group_by(cluster1, word) %>% count(word) %>% group_by(cluster1) %>% mutate(frecuencia = n / n()) %>%
+              arrange(cluster1, desc(frecuencia)) %>% nest() 
+
+walk2(.x = df_grouped$cluster1, .y = df_grouped$data, .f = wordcloud_custom)
+```
