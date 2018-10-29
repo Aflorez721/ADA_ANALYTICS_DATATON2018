@@ -1,0 +1,402 @@
+---
+title: 'Dataton BC-20018: Limpieza de datos y muestra'
+author: "ADA Analytics"
+date: "27 de octubre de 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introducción
+
+Dado que se tiene un gran volumen de datos para procesar en el reto del Dataton BC-2018, con un peso cercano a 2.5 Gb, representando más de 11.5 millones de filas en la data. Lo cual requiere para su procesamiento disponer de un hardware potente (ejemplo: GPU) o herramientas tecnológicas en la nube como: Google Cloud, Azure, Amazon Web Services (AWS), entre otros. 
+
+Dicho esto, se nos presentaron problemas para poder trabajar en la Cloud de Azure, donde tenemos una cuenta, por lo que decidimos seleccionar una muestra de clientes más pequeña pero que continuase siendo representativa a la población de clientes de Bancolombia, con la finalidad de que los tres miembros del equipo ADA Analytics pudiera trabajar con esa data y evitar más inconvenientes en el procesamiento de la misma.
+
+A continuación, se presenta el criterio de selección de dicha muestra, así como la descripción de algunas variables de interés para el análisis de la data.
+
+
+## Objetivo
+
+El objetivo de esta fase inicial de nuestro analisis es poder obtener una muestra aleatoria de clientes más pequeña para poder procesar la data desde nuestros computadores. Además de realizar un prepocesamiento de los datos para su posterior analísis y ajuste en el modelo para la clasificación de las transacciones.
+
+## Librerias a emplear 
+
+La librerias a emplear se listan a continuación:
+
+```{r, message=FALSE}
+library(tidyverse) # Libreria del tidyuniverse: ggplot2, dplyr, tidy, otros.
+library(VIM)       # Valores faltantes
+```
+
+## Lectura de datos
+
+Para la lectura de las datas en formato .csv se emplea la función *read_csv()* del paquete **readr** del tidyuniverse.
+
+### Data 1: dt_trxpse_personas_2016_2018_muestra_adjt.csv
+
+La primera data corresponde a la información de las transacciones realizadas por los clientes donde se presenta información de la transacción, como la fecha, hora, valor de la transacción y algunas variables que dan información textual o categorica del ente por donde se realizó la transacción.
+
+```{r, warning=FALSE}
+# Leyendo la data
+df.trs.personas <- read_csv("~/Dataton 2018 ADA Analytics/dt_trxpse_personas_2016_2018_muestra_adjt.csv",   col_names = FALSE, col_types = cols(X1 = col_character(), X2 = col_integer(), X3 = col_date(format = "%Y%m%d"), X4 = col_integer()))
+#View(df.trs.personas)
+str(df.trs.personas)
+```
+
+La data de transacciones consta de 11 variables y 11.795.963
+
+```{r}
+#dimensión de la data
+dim(df.trs.personas)
+```
+
+La data de las transacciones de personas tiene un peso de 1.8 GB. Lo cual es un tamaño de gran exigencia de computo, más aún cuando no se cuentan con GPU o en una Cloud para procesarla y correr los algortimos de ML.
+
+```{r}
+format(object.size(df.trs.personas),units = "auto",standard = "SI")
+```
+
+### Renombrando las variables en base a metadatos de Bancolombia
+
+
+```{r}
+colnames(df.trs.personas) <- c("id_trn_ach",
+                                "id_cliente",
+                                "fecha",
+                                "hora",
+                                "valor_trx",
+                                "ref1",
+                                "ref2",
+                                "ref3",
+                                "sector",
+                                "subsector",
+                                "descripcion")
+
+```
+
+
+### Data 2: dt_info_pagadores_muestra
+
+La segunda data corresponde a la información de los pagadores , como su id único de idefificación (id_cliente) el cual correspondera a la llave primaria para poder conectar la información entre ambas datas (trasnsacciones y personas) el código de identificación del cliente  fecha, hora, valor de la transacción y algunas variables que dan información textual o categorica del ente por donde se realizó la transacción.
+
+
+```{r, warning=FALSE,message=FALSE}
+df.pagadores <- read_csv("~/Dataton 2018 ADA Analytics/dt_info_pagadores_muestra.csv", col_names = FALSE, col_types = cols(X1 = col_integer(), X2 = col_character(), X3 = col_character(), X4 = col_character(), X5 = col_character(),  X6 = col_character(), X7 = col_character(), X8 = col_integer(), X9 = col_character()))
+#View(df.pagadores)
+```
+
+
+```{r}
+str(df.pagadores)
+```
+
+La data de pagadores consta de 9 variables y 338606 clientes, respectivamente.
+
+```{r}
+#dimensión de la data
+dim(df.pagadores)
+```
+
+### Renombrando las variables en base a metadatos de Bancolombia
+
+```{r}
+colnames(df.pagadores) <- c("id_cliente",
+                            "seg_str",
+                            "ocupacion",
+                            "tipo_vivienda",
+                            "nivel_academico",
+                            "estado_civil",
+                            "genero",
+                            "edad",
+                            "ingreso_rango")
+```
+
+
+### Datos de Pagadores: Valores perdidos y Valores atípicos
+
+En esta sección, realizamos una inspección de la data de pagadores, ya que siendo la data de información de clientes, es en esencia elprincipal insumo a considerar para la muestra.
+
+La siguiente función nos permite resumir el número de valores perdidos en la data segun la variable.
+
+```{r}
+## Función para resumen de valores perdidos
+prop.na <- function(dataframe) {
+	m <- sapply(dataframe, function(x) {
+		data.frame(
+			nmiss=sum(is.na(x)), 
+			n=length(x), 
+			propnas=sum(is.na(x))/length(x)
+		)
+	})
+	d <- data.frame(t(m))
+	d <- sapply(d, unlist)
+	d <- as.data.frame(d)
+	d$variable <- row.names(d)
+	row.names(d) <- NULL
+	d <- cbind(d[ncol(d)],d[-ncol(d)])
+	return(d[order(d$propnas,decreasing = TRUE), ])
+}
+
+## Aplicando la función de valores perdidos en la data de pagadores.
+df.na <- prop.na(df.pagadores)
+head(df.na)
+```
+
+De lo anterior, podemos presentarlo en la tabla de frecuencias, donde las primeras filas corresponden a las variables con mayor cantidad de valores perdidos, mientras que las últimas variables corresponden a c
+aquellas con el menor número de valores perdidos.
+
+
+```{r}
+df.na.1 <- df.na[order(df.na$nmiss,decreasing = T),]
+require(pander)
+pander(df.na.1)
+```
+
+
+Con la tabla anterior se puede apreciar que:
+
+* La variable tipo_vivienda presenta un 50.86% de valores perdidos, por lo cuál no tienen sentido aplicar un proceso de imputación sobre esta variable.
+
+* La variable nivel_academico presentan un 13.08% de valores perdidos en sus datos, posiblemente se pueda emplear un proceso de imputación de esta variable o tomar la información faltante como una nueva categoria de "Sin Información".
+
+* Ya en las variables ocupacion,estado_civil,edad y genero, se justificaria aplicar un proceso de imputación múltiple ya que presentan a lo más 2% de valores perdidos. Incluso para la variable edad al tener tan bajo porcentaje de valores perdidos, se puede realizar imputaciones más sencillas con estadísticos de tendencia central como la media, moda o la mediana, o a través de imputación por el método del vecino más cercano.
+
+
+Otro caso más radical, seria solo seleccionar a aquellos clientes que no presentan ningún valor perdido en la data de personas. Como se ejemplifica a continuación:
+
+```{r}
+pg <- df.pagadores #haciendo una copia de la data de pagadores
+pg <- na.omit(pg)
+
+aggr(pg, prop=FALSE, 
+     numbers=TRUE, border=NA,
+     combine=TRUE)
+
+View(pg)
+```
+
+Otra forma más 
+
+
+```{r}
+suppressPackageStartupMessages(library(Amelia))
+missmap(df.pagadores) #data is the data-set you use(here free trade)
+
+```
+
+Como la mayor parte de las variables a imputar son de tipo categorico, se deben recodificar en variables númericas. La variable tipo vivienda sera la unica que no se imputará debido al gran número de valores perdidos que hay en esta.
+
+```{r, message=FALSE}
+## Recodificando las variables categorias a numericas
+library(car)
+df.pagadores$seg_str1 <- recode(df.pagadores$seg_str,"'EMPRENDEDOR'=1; 'OTRO'=2; 'PERSONAL'=3; 'PERSONAL PLUS'=4; 'PREFERENCIAL'=5")
+
+df.pagadores$nivel_academico1 <-  recode(df.pagadores$nivel_academico,"'I'=-1;'N'=0;	'P'=1;'H'=2;'B'=2;'T'=3;'U'=4;'E'=5;'S'=5")
+
+df.pagadores$estado_civil1 <-  recode(df.pagadores$estado_civil,"'S'=1;'M'=2;'F'=3;'I'=4;	'D'=5;'W'=6;'O'=7")
+
+df.pagadores$genero1 <-  recode(df.pagadores$genero ,"'F'=0;'M'=1")
+
+df.pagadores$ocupacion1 <- recode(df.pagadores$ocupacion,"'S'=0;	'2'=1;	'4'=2;	'O'=5;	'I'=8;'3'=9;'1'=10;	'5'=11;	'6'=12;	'P'=13;	'7'=14;	'8'=15;	'9'=16;'E'=17")
+
+
+df.pagadores$ingreso_rango1 <- recode(df.pagadores$ingreso_rango,"'0'=0;	'a. (0  1.1MM]'=1;	'b. (1.1  2.2MM]'=2; 'c. (2.2  3.3MM]'=3;	'd. (3.3  4.4MM]'=4;'e. (4.4  5.5MM]'=5;'f. (5.5  6.6MM]'=6;	'g. (6.6  7.6MM]'=7;'i. (8.7  Inf)'=8;'No disponible'=99")
+
+```
+
+Por otro lado, examinando más de cerca la variable edad del cliente, se puede observar que a parte de los 6290 clientes con valores faltantes, también se encuentran valores negativos en marcadas como edades. Siendo el promedio de edad de 34 años y teniendo que el 75% de los clientes presentan una edad menor o igual a 43 años. El valor máximo por su parte, 118 años, da cuenta de la presencia de valores atípos en esta variable.
+
+```{r}
+# Estadísticos descriptivos: variable Edad
+summary(df.pagadores$edad)
+```
+
+De lo anterior, se procede a entender el número de valores negativos en la variable edad. Con lo que se tiene solo una edad con esta caracteristica, por lo cual se procede a colocarla como un valor perdido NA a ser imputado.
+
+```{r}
+nrow(df.pagadores[(df.pagadores$edad<0) & !is.na(df.pagadores$edad),])
+```
+
+```{r}
+# Colocando como valor perdido el valor negativo de edad
+df.pagadores[(df.pagadores$edad<0) & !is.na(df.pagadores$edad),]<- NA
+```
+
+Con lo anterior, ahora se puede graficar la distribución de la edad de los clientes, donde se pueden observar la presencia de valores atípicos superiores e infriores en esta variable.
+
+```{r}
+hist(df.pagadores$edad, xlab = "Edad", main = "Histogram", col = blues9)
+par(new=TRUE)
+d <- density(df.pagadores$edad, na.rm = T)
+plot(d, xlab = "", ylab = "", axes=FALSE, main = "", lwd=2)
+```
+
+```{r}
+boxplot(df.pagadores$edad, main = "Boxplot", col="blue")
+```
+
+La función boxplot.stats permite obtener los valores atípicos detectados en el boxplot, tanto a nivel superior como inferior.
+
+
+```{r}
+outlier_values <- boxplot.stats(df.pagadores$edad)$out  # outlier values.
+head(outlier_values, n=15) # Algunos valores atípicos
+```
+
+
+
+Considerando estos valores atípicos a nivel estadístico, se procederan a sustraer estos clientes, por lo que se obtiene una data de 326945 clientes.
+
+```{r}
+## Quitando los valores atípicos con la variable edad atípicos
+df.pagadores.sout <- df.pagadores[!(df.pagadores$edad %in% outlier_values),]
+dim(df.pagadores.sout)
+```
+
+Quedando una distribución de la variable mucho más limpia para aplicarse en el modelo más adelante.
+
+```{r}
+boxplot(df.pagadores.sout$edad, main = "Boxplot", col="blue")
+```
+
+Ahora se busca tener una data de pagadores donde todas sus variables sean numericas. 
+
+```{r}
+data <- df.pagadores.sout[,c("id_cliente","seg_str1","nivel_academico1","estado_civil1","ingreso_rango1","edad","genero1","ocupacion1")]
+```
+
+
+Imputando los valores faltantes con algoritmos de boostraping.
+
+```{r}
+Completed_data<-amelia(data,m=3,cs="ingreso_rango1", p2s=0,ords=c("nivel_academico1","ocupacion1"), noms=c("estado_civil1","genero1"),idvars=c("id_cliente"))
+```
+
+Pasando la data imputada con Amelia a un data frame para trabajar con la data de transacciones.
+
+```{r}
+df.pagadores.imput <- Completed_data$imputations$imp1
+```
+
+
+Ahora, también le colocaremos la variable de tipo_vivienda que se saco de la data a imputar por tener una proporción muy alta de valores perdidos.
+
+
+
+```{r}
+df.aux <- df.pagadores[,c("id_cliente","tipo_vivienda")]
+
+df.pagadores.1 <- inner_join(df.pagadores.imput,df.aux,by = c("id_cliente"))
+dim(df.pagadores.1)
+```
+
+Dandole una vista a la data imputada:
+
+```{r}
+head(df.pagadores.1,n=10)
+```
+
+## Combinando las datas: Transacciones y personas
+
+Agora, con los datos de personas imputadas, se procede a hacer la combinación de la data de transacciones y la data de personas, apoyados en la función *left_join* del paquete de dplyr. 
+
+```{r}
+## Realizando un Left join con dplyr
+df.comp <- left_join(df.trs.personas,df.pagadores.1, by=c("id_cliente"))
+#View(df.comp)
+```
+
+
+La data conjunta de transacciones y personas pasa a tener un peso de 2.3 GB.
+
+```{r}
+format(object.size(df.comp),units = "auto",standard = "SI")
+```
+
+
+```{r}
+str(df.comp)
+```
+
+
+## Seleccionando una muestra de clientes más pequeña
+
+
+Ahora, dado que se necesita una muestra de clientes más pequeña, dadas las limitaciones del hardware para afrontar el reto del Dataton. Consideramos lo siguiente:
+
+1.	Consideraremos un error de muestreo relativo cercano al 0.5%.
+2.	El nivel de confianza es del 95%.
+3.	Consideraremos la hipótesis de varianza máxima para las proporciones, donde p=0.5 y q=0.5.
+4.	Considerando una información proporcionada por las personas del Dataton, indicando que los el número de clientes en la tabla representaban cerca del 20% de la población target, se calcula un estimado N para la población.
+
+
+> Actualmente tenemos una muestra de 338345 clientes. 
+
+```{r}
+id <-df.comp %>% select(id_cliente) %>% distinct()
+dim(id)
+```
+
+Dado los aspectos anteriores, se procede al nuevo tamaño de la muestra, donde arroja un valor de 37562 clientes.
+
+```{r, message=FALSE,warning=FALSE}
+#Selección de la muestra
+# Número aproximado de clientes
+
+Np <- 338345*5 #Valor estimado de clientes BC
+#Error relativo
+r<-0.005
+#Nivel de confianza
+l<-0.95
+
+#Tamaño de la muestra
+require(samplingbook)
+n<- sample.size.prop(e=r,N=Np,level = l)
+n
+```
+
+Ahora se fija una semilla aleatoria (en este caso se coloca un número de forma deterministica) para hacer esta selección de muestra reproducible por algún otro programador o cientifico de datos, así puede contar con los mismos clientes seleccionados.
+
+
+```{r}
+## Seleccionando los id_clientes en la muestra
+set.seed(721) ## Fijando una semilla aleatoria
+id.muestra<- sample_n(id,size=n$n,replace=FALSE)
+head(id.muestra)
+```
+
+
+### Nueva data con los clientes muestreados
+
+Con los id_cliente seleccionados en la muestra, se procede a seleccionar las transacciones que correspondan a los 37562 clientes de la nueva muesra.
+
+```{r}
+## Seleccion de data muestra
+df.comp.m<- inner_join(df.comp,id.muestra,by="id_cliente")
+```
+
+Ahora, pasamos de una data de 2.3 GB a una data de 260.4 MB para ser trabajada al nivel de los recursos que disponemos actualmente.
+
+```{r}
+format(object.size(df.comp.m),units = "auto",standard = "SI")
+```
+
+## Guardando la data muestreada
+
+```{r}
+# Guardando el DataFrame como  RData format
+save(df.comp.m, file = "df.comp.m.21102018.RData")
+```
+
+* Observación:
+
+Para la carga de datos de muestra de clientes desde el archivo de .RData se puede emplear la función load
+
+
+```{r}
+load("df.comp.m.21102018.RData")
+```
+
